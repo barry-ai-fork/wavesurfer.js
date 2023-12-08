@@ -6,6 +6,129 @@ import Renderer from './renderer.js'
 import Timer from './timer.js'
 import WebAudioPlayer from './webaudio.js'
 
+export const extractFirstAndLastSilentRegions = (
+  audioData: Float32Array,
+  duration: number,
+) => {
+  const minValue = 0.01;
+  const minSilenceDuration = 0.1;
+  const scale = duration / audioData.length;
+  const silentRegions = [];
+
+  // Find all silent regions longer than minSilenceDuration
+  let start = 0;
+  let end = 0;
+  let isSilent = false;
+  for (let i = 0; i < audioData.length; i++) {
+    if (audioData[i] < minValue) {
+      if (!isSilent) {
+        start = i;
+        isSilent = true;
+      }
+    } else if (isSilent) {
+      end = i;
+      isSilent = false;
+      if (scale * (end - start) > minSilenceDuration) {
+        silentRegions.push({
+          end_position: end,
+          start: scale * start,
+          end: scale * end,
+        });
+      }
+    }
+  }
+  console.log('firstSilentRegion', silentRegions);
+  // Find the first and last silent regions
+  return silentRegions[0] || null;
+};
+
+// 提取音频数据中的最后一个连续静音区域
+export const extractEndSilentRegion = (
+  audioData: Float32Array,
+  duration: number,
+) => {
+  // 设置阈值和最小静音时长
+  const minValue = 0.01;
+  const minSilenceDuration = 0.1;
+
+  // 计算音频数据的缩放比例
+  const scale = duration / audioData.length;
+
+  // 用于存储静音区域的数组
+  const silentRegions = [];
+  let start = 0;
+  let end = 0;
+  let isSilent = false;
+
+  // 从音频数据的末尾开始，逐个检查每个值是否小于阈值
+  for (let i = audioData.length - 1; i > 0; i--) {
+    // 如果当前值小于阈值，且当前状态不是静音，则将当前索引标记为静音区域的开始
+    if (audioData[i] < minValue && !isSilent) {
+      start = i;
+      isSilent = true;
+    }
+
+    // 如果当前值不小于阈值，且当前状态是静音，则将当前索引标记为静音区域的结束
+    if (audioData[i] >= minValue && isSilent) {
+      end = i;
+      isSilent = false;
+
+      // 如果静音区域的持续时间超过最小静音时长，则将其添加到静音区域数组中
+      if (scale * (start - end) > minSilenceDuration) {
+        silentRegions.push({
+          start_position: end,
+          start: scale * end,
+          end: scale * start,
+        });
+      }
+    }
+  }
+
+  // 从静音区域数组中返回第一个静音区域（即音频数据中的最后一个静音区域）
+  return silentRegions[0] || null;
+};
+
+
+export const getAudioSilentSideRegions = (
+  audioBuffer: AudioBuffer,
+) => {
+  const audioData = audioBuffer.getChannelData(0);
+  const regions1 = extractFirstAndLastSilentRegions(
+    audioData,
+    audioBuffer.duration,
+  );
+  const regions2 = extractEndSilentRegion(audioData, audioBuffer.duration);
+
+  let start_time = 0; //开始时间
+  let end_time =
+    (audioBuffer.duration / audioData.length) * (audioData.length - 1); //结束时间
+
+  if (regions1) {
+    start_time = regions1.end;
+  }
+
+  if (regions2) {
+    end_time = regions2.start;
+  }
+  const total_grids_num = audioBuffer.length; //总格子数
+  const region_start_grid_index = regions1?.end_position || 0;
+  const region_end_grid_index = regions2?.start_position || total_grids_num;
+  console.log({
+    region_start_grid_index,
+    region_end_grid_index,
+    total_grids_num,
+  });
+  console.log({ start_time, end_time });
+  return {
+    start_time,
+    end_time,
+    region_start_grid_index,
+    region_end_grid_index,
+    total_grids_num,
+  };
+}
+
+
 export type WaveSurferOptions = {
   /** Required: an HTML element or selector where the waveform will be rendered */
   container: HTMLElement | string
@@ -172,13 +295,34 @@ class WaveSurfer extends Player<WaveSurferEvents> {
       this.load(url, this.options.peaks, this.options.duration)
     }
   }
+  private getProgress(currentTime:number){
+    console.log("renderProgress",this.getDuration(),this.decodedData?.duration)
+    if(super.getDuration() !== this.decodedData?.duration && this.decodedData?.duration){
+      const gap = super.getDuration() - this.decodedData?.duration;
+      if(gap){
+        const t = currentTime - gap
+        if(t < 0){
+          return 0
+        }else{
+          console.log({gap},t,currentTime,this.decodedData?.duration,t / this.decodedData?.duration)
+          return t / this.decodedData?.duration
+        }
+      }else{
+        return currentTime / this.getDuration()
+      }
+    }else{
+      return currentTime / this.getDuration()
+    }
 
+  }
   private initTimerEvents() {
     // The timer fires every 16ms for a smooth progress animation
     this.subscriptions.push(
       this.timer.on('tick', () => {
         const currentTime = this.getCurrentTime()
-        this.renderer.renderProgress(currentTime / this.getDuration(), true)
+        console.log("renderProgress tick",currentTime)
+        const progress = this.getProgress(currentTime);
+        this.renderer.renderProgress(progress, true)
         this.emit('timeupdate', currentTime)
         this.emit('audioprocess', currentTime)
       }),
@@ -194,7 +338,8 @@ class WaveSurfer extends Player<WaveSurferEvents> {
     this.mediaSubscriptions.push(
       this.onMediaEvent('timeupdate', () => {
         const currentTime = this.getCurrentTime()
-        this.renderer.renderProgress(currentTime / this.getDuration(), this.isPlaying())
+
+        this.renderer.renderProgress(this.getProgress(currentTime), this.isPlaying())
         this.emit('timeupdate', currentTime)
       }),
 
@@ -334,7 +479,6 @@ class WaveSurfer extends Player<WaveSurferEvents> {
 
   private async loadAudio(url: string, blob?: Blob, channelData?: WaveSurferOptions['peaks'], duration?: number) {
     this.emit('load', url)
-
     if (!this.options.media && this.isPlaying()) this.pause()
 
     this.decodedData = null
@@ -365,6 +509,34 @@ class WaveSurfer extends Player<WaveSurferEvents> {
     }
 
     if (this.decodedData) {
+      const res = getAudioSilentSideRegions(this.decodedData)
+      console.log("decodedData",this.decodedData,res)
+      const audioContext = new AudioContext({sampleRate:this.options.sampleRate})
+      const audioBuffer = this.decodedData;
+      // this.setTimeDelta(res.start_time)
+      const sampleRate = audioBuffer.sampleRate;
+      const startSampleIndex = Math.floor(res.start_time * sampleRate);
+      const endSampleIndex = Math.floor(res.end_time * sampleRate);
+      const totalSampleIndex = Math.floor(audioBuffer.duration * sampleRate);
+      console.log("=====>",{numberOfChannels:audioBuffer.numberOfChannels,startSampleIndex,endSampleIndex,totalSampleIndex,sampleRate,duration:audioBuffer.duration,sampleRateOptions:this.options.sampleRate})
+      //
+      const trimmedBuffer = audioContext.createBuffer(
+        audioBuffer.numberOfChannels,
+        endSampleIndex - startSampleIndex,
+        this.options.sampleRate,
+      );
+
+      for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+        const originalData = audioBuffer.getChannelData(channel);
+        const trimmedData = trimmedBuffer.getChannelData(channel);
+
+        trimmedData.set(originalData.slice(startSampleIndex, endSampleIndex));
+      }
+      console.log(trimmedBuffer)
+      console.log("duration0: ",this.decodedData.duration,this.getDuration())
+      this.decodedData = await Decoder.createBuffer([trimmedBuffer.getChannelData(0)], trimmedBuffer.duration)
+      console.log("duration1: ",this.decodedData.duration,this.getDuration())
+
       this.emit('decode', this.getDuration())
       this.renderer.render(this.decodedData)
     }

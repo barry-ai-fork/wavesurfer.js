@@ -6,7 +6,7 @@ import Renderer from './renderer.js'
 import Timer from './timer.js'
 import WebAudioPlayer from './webaudio.js'
 
-export const extractFirstAndLastSilentRegions = (
+const extractFirstAndLastSilentRegions = (
   audioData: Float32Array,
   duration: number,
 ) => {
@@ -43,7 +43,7 @@ export const extractFirstAndLastSilentRegions = (
 };
 
 // 提取音频数据中的最后一个连续静音区域
-export const extractEndSilentRegion = (
+const extractEndSilentRegion = (
   audioData: Float32Array,
   duration: number,
 ) => {
@@ -89,7 +89,7 @@ export const extractEndSilentRegion = (
 };
 
 
-export const getAudioSilentSideRegions = (
+const getAudioSilentSideRegions = (
   audioBuffer: AudioBuffer,
 ) => {
   const audioData = audioBuffer.getChannelData(0);
